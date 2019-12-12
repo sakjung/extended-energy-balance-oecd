@@ -1,0 +1,147 @@
+---
+title: "OECD"
+author: "Jung"
+date: '2019 12 2 '
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Loading Library required}
+rm(list=ls())
+library(tidyverse)
+library(readxl)
+```
+
+```{r Path setting}
+#path to the folder that contains all the datasets
+datafolder <- "oecd-data/"
+
+( filesinfolder <- list.files(datafolder) )
+```
+
+```{r Filename check}
+#Checking all the country files through the for loop
+for(i in 1:length(filesinfolder)) {
+  this_folder <- filesinfolder[i]
+  this_folder_path <- paste(datafolder, this_folder,sep="")
+  this_folder_files <- list.files(this_folder_path)
+    for(j in 1:length(this_folder_files)){
+      print(this_folder_files[j])
+    }
+}
+```
+
+**Problems found**
+
+1. There is an unnecessary and empty folder `secondstudygroup`
+2. There is an unnecessary excel file `$Albania.xlsm`
+
+This report will now read all the excel files in each country folder while solving the two problems mentioned above at the same time. In order to combine all the excel file, this report will store each dataframe of excel file to an empty list called `l` and then combine all the data in the list. Flow data will be read in the same way and stored in the other list called `flow`, which will be used to assign flow information to each section later. Meanwhile, two empty vectors will be made: `number_of_rows` and `filesinfolder_real`. `number_of_rows` vector stores the number of rows of each excel file so that it can be used to divide the sectors for flow and country information. `filesinfolder_real` vector stores country names dropping the unnecessary folder name "secondstudygroup". Then, it can be used to assign the country names to each section of country.
+
+```{r Reading excel files, message=FALSE, warning=FALSE, results='hide'}
+l <- list()
+number_of_rows <- vector('numeric')
+flow <- list()
+filesinfolder_real <- vector("character")
+
+#The first for loop to open each country folder in the datafolder
+for(i in 1:length(filesinfolder)) {
+  this_folder <- filesinfolder[i]
+  this_folder_path <- paste(datafolder, this_folder,sep="")
+  this_folder_files <- list.files(this_folder_path)
+  #if statement to skip the empty folder "secondstudygroup"
+  if (!length(this_folder_files) == 0) {
+    filesinfolder_real <- c(filesinfolder_real, this_folder)
+    #The second for loop to load each excel file in a country folder
+    for(j in 1:length(this_folder_files)){
+      #if statement not to read unnecessary file "~$Albania.xlsm"
+      if (grepl(".xlsx", this_folder_files[j])) {
+        data <- read_excel(paste(this_folder_path,"/",this_folder_files[j], sep=""), skip = 5)
+        data_flow <- read_excel(paste(this_folder_path,"/",this_folder_files[j], sep=""), range = cell_rows(3), col_names = FALSE)[,3]
+        
+        l <- append(l, list(data))
+        # there are 4 unnecessary rows in each excel file which must be dropped later
+        number_of_rows <- c(number_of_rows, nrow(data)-4)
+        flow <- append(flow, list(data_flow))
+      }
+    }
+  }
+}
+```
+
+```{r Binding the data in the lists}
+#binding all dataframes in the list in a row wise
+dt <- do.call("rbind", l)
+#binding all flow dataframes 
+flow_dt <- do.call("rbind", flow)
+print(head(dt))
+print(head(flow_dt))
+```
+
+This report will manipulate the combined dataframe in an appropriate form to be analysed in the future.
+
+```{r Dropping unnecessary rows}
+#dropping unnecessary 4 rows using the values in the "Product" column and and the second column which is empty
+
+row_to_drop <- which(grepl("Time|Data|Legend|x", dt$Product))
+dt <- dt[-row_to_drop, -2]
+```
+
+```{r Changing column name}
+#Changing the column name "Product" to the appropriate name "Year"
+colnames(dt)[1] <- "Year"
+print(head(dt))
+```
+
+```{r Assigning country and flow values to the dataframe}
+#making empty column for Country and Flow
+dt <- dt %>% mutate(Country = NA, Flow = NA)
+
+#Each country folder has 5 excel files
+number_of_rows_per_country <- tapply(number_of_rows, (seq_along(number_of_rows)-1) %/% 5, sum)
+cumsum_rows_per_country <- cumsum(number_of_rows_per_country)
+
+#Assigning country names to each section
+dt[1:215,]$Country <- filesinfolder_real[1]
+for (i in 2:length(filesinfolder_real)) {
+  start <- cumsum_rows_per_country[i-1]+1
+  end <- cumsum_rows_per_country[i]
+  dt[start:end,]$Country <- filesinfolder_real[i]
+} 
+
+cumsum_rows <- cumsum(number_of_rows)
+
+#Assigning flow values to each section
+flow1 <- pull(flow_dt[1,])
+dt[1:43,]$Flow <- flow1
+for (k in 2:length(number_of_rows)){
+  start <- cumsum_rows[k-1]+1
+  end <- cumsum_rows[k]
+  dt[start:end,]$Flow <- pull(flow_dt[k,])
+}
+```
+
+```{r Gathering column names}
+#gathering the column names of product into the single column "product"
+dt_gathered <- gather(dt, "product", "value", 2:66)
+print(head(dt_gathered))
+```
+
+```{r Assign NA values and changing columns order}
+#Assign NA values and changing columns order
+dt_gathered[dt_gathered == ".."] <- NA
+dt_gathered <- dt_gathered[,c(2,1,3,4,5)]
+print(head(dt_gathered))
+```
+
+```{r Answer for the assignment}
+#the total number of records in the dataset
+print(nrow(dt_gathered))
+#the total number of records for each product across countries across years
+head(dt_gathered %>% 
+  group_by(Country, Year, product) %>%
+    summarize(number_of_records = n()))
+```
